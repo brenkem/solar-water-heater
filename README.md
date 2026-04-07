@@ -30,5 +30,4 @@ Temperatursensoren jeder Ebene.
 
 Die Speicherladung berechnet sich durch folgende Formel:
 
-L[%]=(19,55*T1​+60,9*T2​+19,55*T3​​)/Tmax​
-
+L[%]=(19,55*T1​+60,9*T2​+19,55*T3​​)/Tmax​ | T in m°C

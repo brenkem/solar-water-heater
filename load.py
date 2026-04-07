@@ -37,16 +37,9 @@ def get_charge():
     # Gewichtete Durchschnittstemperatur in m°C
     t_avg = (t1 * W1 + t2 * W2 + t3 * W3)
 
-    # Berechnung der Ladung relativ zu T_MAX (Vernachlässigung von T_MIN)
+    # Berechnung der Ladung relativ zu T_MAX
     # Formel: (t_avg / T_MAX) * 100
-    # Multiplikation mit 10000 vor Division für 2 Nachkommastellen Präzision
-    #charge = (t_avg // T_MAX)
-    charge = (t_avg / (T_MAX * 100))
-    #charge_pct = charge_scaled / 100.0
-
-    # Begrenzung auf 100% (falls T_MAX überschritten wird)
-    #charge_pct = min(100.0, max(0.0, charge_pct))
-
+    charge = (t_avg / (T_MAX *100))
     return charge, t1, t2, t3
 
 if __name__ == "__main__":
@@ -54,5 +47,7 @@ if __name__ == "__main__":
 
     if result:
         percent, t1, t2, t3 = result
-        print(f"Sensordaten (m°C): T1={t1}, T2={t2}, T3={t3}")
-        print(f"Berechnete Speicherladung: {percent:.2f} %")
+        #print(f"Sensordaten (m°C): T1={t1}, T2={t2}, T3={t3}")
+        #print(f"Berechnete Speicherladung: {percent:.2f} %")
+
+        print(f"{percent:.1f}; {t1}; {t2}; {t3}")
