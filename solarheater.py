@@ -3,16 +3,18 @@ import time
 import lgpio
 import smbus2
 
-################################## defines ####################################
+################################## Definitionen ####################################
 # Pfad zur Leistungsdatei
 POWER_FILE = "/mnt/s0hm/power"
 LOAD_FILE = "/run/shm/ww_load"
 
-############ TODO 70 °C to debug ########################
-T_MAX = 70000  # 80 °C, Maximaltemperatur
+## Temperatur
+T_MAX = 75000  # 75 °C, Maximaltemperatur
 T_DIFF = 2000  # 2 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
 
-L_TRH = 150    # 150 Watt, Leistungsschwelle zum Heizen
+# Leistung
+L_TRH = 200    # 200 Watt, Leistungsschwelle zum Heizen
+
 # Gewichtungsfaktoren nach Wassermenge (Summe = 10000)
 # 19,55% für oberen und unteren Warmwasserspeicherabschnitt; 60,9 % für Mittelteil
 W = [
@@ -77,15 +79,15 @@ def read_file(file):
         with open(file, 'r', encoding='utf-8') as datei:
             # Inhalt lesen und Leerzeichen/Zeilenumbrüche entfernen
             inhalt = datei.read().strip()
-
             datei.close()
-            # Umwandlung in Integer
+
+            # Rückgabe des umgewandelten Integerwertes
             return int(inhalt)
 
     except FileNotFoundError:
         print(f"Fehler: Die Datei unter '{file}' wurde nicht gefunden.")
     except ValueError:
-        print(f"Fehler: Der Inhalt der Datei ist keine gültige Ganzzahl.")
+        print(f"Fehler: Der Inhalt der Datei ist keine gültige Ganzzahl: {inhalt}")
     except Exception as e:
         print(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
 
@@ -180,6 +182,9 @@ def get_dac_value(p_target):
 
 
 def write_dac_reg(i2c_bus, register_value):
+    """
+    Schreibt den übergebenen Registerwert in den DAC des übergebenen I2B Busses.
+    """
     # DAC Parameter
     device_address = 0x58
     register_address = 0x03
@@ -187,15 +192,8 @@ def write_dac_reg(i2c_bus, register_value):
     # Schreibe Highbyte in [1] und Lowbyte in [0]
     data = [(register_value & 0xFF), ((register_value >> 8) & 0xFF)]
 
+    # Schreibe Datenfeld nach DAC
     i2c_bus.write_i2c_block_data(device_address, register_address, data)
-    #print(f"--- DEBUG: data [0]={hex(data[0])} [1]={hex(data[1])}!")
-    #try:
-        #i2c_bus.write_i2c_block_data(device_address, register_address, data)
-    #print(f"--- DEBUG: data [0]={hex(data[0])} [1]={hex(data[1])}!")
-    #except Exception as e:
-        #print(f"Ein unerwarteter Fehler beim Schreiben des I2C Busses ist aufgetreten: {e}")
-    #except:
-        #print("Failed to write I2C bus.")
 
 
 def solar_heater():
@@ -255,7 +253,7 @@ def solar_heater():
             continue
 
         # Berechne Speicherladung und schreibe Speicherladung diese in den RAM
-        calc_load()
+        ww_load = calc_load()
 
 
         # Wahren PV-Überschuss berechnen
@@ -266,6 +264,7 @@ def solar_heater():
         # 2. Sicherheitscheck VOR der Leistungsanforderung
         if (T_exc := check_max_t()):
             print(f"### TEMP to high: T_exc: {T_exc} m°C")
+            print(f"LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
             # Heizung bei T_MAX abschalten!
             write_dac_reg(BUS, OFF)
             current_heater_power = 0
@@ -274,14 +273,11 @@ def solar_heater():
             for i in [0, 1, 2]:
                 TEMP[i] = check_level_temp(i)
             continue
-
-
-
+            ww_load = calc_load()
 
         # Leistungsregelung für Heizpatrone basierend auf absolutem Überschuss
         if absolute_excess > L_TRH:
-            print(power) #### TODO DEBUG
-            print(absolute_excess) #### TODO DEBUG
+            print(absolute_excess) #### DEBUG Info
 
             # Ziehe Puffer ab, um Netzbezug zu vermeiden
             target_power = absolute_excess - L_TRH
@@ -295,7 +291,7 @@ def solar_heater():
             # zurückzulesen, aber target_power reicht als gute Näherung.
             current_heater_power = target_power
 
-            print(f"DAC({target_power} W) = 0x{hex(reg_val)}; To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+            print(f"DAC({target_power} W) = 0x{hex(reg_val)}; LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
         else:
             write_dac_reg(BUS, OFF)
             current_heater_power = 0
@@ -315,6 +311,7 @@ if __name__ == "__main__":
         solar_heater()
     except KeyboardInterrupt:
         print("\n... Solarheater beendet.")
-        write_dac_reg(BUS, OFF)
-        BUS.close() # Always close manually if not using 'with'
-        lgpio.gpio_write(GPIO_CHIP, REL_PIN, 0)
+        write_dac_reg(BUS, OFF) # setze Leistungsteller auf 0V
+        BUS.close() # Schließe I2B Bus
+        time.sleep(1)
+        lgpio.gpio_write(GPIO_CHIP, REL_PIN, 0) # trenne Schütz
