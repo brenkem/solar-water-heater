@@ -10,7 +10,7 @@ Verbaut wurde aus platzgründen ein 300 Liter Warmwasserspeicher der Marke Therm
 THBWS-R 300 horizontal mit einem Wärmespeicher.
 
 # Temperaturmessung:
-Warmwasserspeicher verfügt über drei Ebenen von DS1820 Temperatursensoren, 
+Warmwasserspeicher verfügt über drei Ebenen von DS1820 Temperatursensoren,
 welche in einer Tauchhülse über die Bauhöhe des Speichers verteilt sind.
 Jede Ebene ist mit zwei nebeneinander sitzenden Temperatursensoren
 ausgestattet zur Redundanz und Sicherheit. Es sind somit sechs Temperatur-
