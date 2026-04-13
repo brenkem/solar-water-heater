@@ -322,33 +322,18 @@ def solar_heater():
             print(f"### No POWER: excess={target_power:>4} W; To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
 
         ####################### END WHILE ########################################
-        # Wartezeit: etwa 1,6 Sekunden durch Auslesen einer Temperaturebene
+        # Wartezeit: etwa 3 Sekunden durch Auslesen von zwei Temperaturebenen zwecks Verzögerung Stromzähler
         try:
-            ########## TODO: Messe Totzeit von Stromzähler um Schleifenzeit anzupassen #############
-            TEMP[ebene] = check_level_temp(ebene)
-            print(f"Lese Temp ebene {ebene}")
-
-            ebene += 1
-            if ebene >= 3:
-                ebene = 0 # setze Ebene zurück auf oben
-
-
-            TEMP[ebene] = check_level_temp(ebene)
-            print(f"Lese Temp ebene {ebene}")
-
-            ebene += 1
-            if ebene >= 3:
-                ebene = 0 # setze Ebene zurück auf oben
-
-            #TEMP[0] = check_level_temp(0)
-            #TEMP[1] = check_level_temp(1)
-            #TEMP[2] = check_level_temp(2)
+            for i in range(2):
+                if ebene >= 2:
+                    TEMP[ebene] = check_level_temp(ebene)
+                    #print(f"Lese Temp ebene {ebene}")
+                    ebene = 0
+                else:
+                   TEMP[ebene] = check_level_temp(ebene)
+                   ebene += 1
         except Exception:
             print(f"Fehler beim zyklischen Lesen der Ebene {ebene}")
-
-        #ebene += 1
-        #if ebene >= 3:
-            #ebene = 0 # setze Ebene zurück auf oben
 
 
 if __name__ == "__main__":
