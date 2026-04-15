@@ -108,11 +108,27 @@ def check_level_temp(level):
         if val is None:
             print(f"KRITISCH: Ebene {level} komplett ausgefallen!")
         print(f"WARNUNG: Temperatursensor auf Ebene {level} ausgefallen!")
-        return val
+        return T_MAX
 
-    diff = abs(T0 - T1)
-    if diff > T_DIFF:
-        print(f"WARNUNG: Differenz Ebene {level} zu hoch ({diff} m°C)!")
+    # Bewerte Messergebnisse hinsichtlich erheblicher Temperaturdifferenz
+    if abs(T0 - T1) > T_DIFF:
+        print(f"INFO: Differenz Ebene {level} zu hoch ({diff} m°C).")
+
+        # Ebene erneut auslesen
+        T0 = read_file(SENS_PAIRS[level][0])
+        T1 = read_file(SENS_PAIRS[level][1])
+
+        # Kontrolliere Sensorausfall
+        if T0 is None or T1 is None:
+            # Falls ein Temperatursensor ausfällt, nimm den verbleibenden
+            val = T0 if T0 is not None else T1
+            if val is None:
+                print(f"KRITISCH: Ebene {level} komplett ausgefallen!")
+            print(f"WARNUNG: Temperatursensor auf Ebene {level} ausgefallen!")
+            return T_MAX
+
+        if abs(T0 - T1) > T_DIFF:
+            print(f"WARNUNG: Temp.differenz immer noch zu hoch ({diff} m°C)!")
 
     # Rückgabe des höheren Wertes
     return max(T0, T1)
@@ -151,7 +167,7 @@ def check_max_t():
     Kontrolliert ob in einer Temperaturebene die Maximaltemperatur überschritten wurde.
     """
     for i in [0, 1, 2]:
-        if TEMP[i] > T_MAX:
+        if TEMP[i] >= T_MAX:
             return TEMP[i]
     return 0
 
@@ -249,6 +265,7 @@ def solar_heater():
     while (T_exc := check_max_t()):
         print(f"NOTE: Temperaturüberschreitung detektiert: {T_exc}!")
         write_dac_reg(BUS, OFF_VAL)
+        ww_load = calc_load()
         time.sleep(10)
         for i in [0, 1, 2]:
             TEMP[i] = check_level_temp(i)
@@ -272,8 +289,21 @@ def solar_heater():
         # Berechne Speicherladung und im RAM ablegen
         ww_load = calc_load()
 
+        # Sicherheitscheck VOR der Leistungsanforderung
+        if (T_exc := check_max_t()):
+            print(f"### TEMP to high: T_exc: {T_exc} m°C")
+            print(f"LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+            # Heizung bei T_MAX abschalten!
+            write_dac_reg(BUS, OFF_VAL)
+            current_heater_power = 0
+            ww_load = calc_load()
+            time.sleep(10)
+            # vor nächster Schleife Temperaturen neu einlesen
+            for i in [0, 1, 2]:
+                TEMP[i] = check_level_temp(i)
+            continue
 
-        # --- Asymmetrische Leistungsanpassung (Die "Rampe") ---
+        # Asymmetrische Leistungsanpassung mittels "Rampe"
         if power > L_STEP:
             # Fall A: Sonne kommt raus -> Langsam hochregeln
             target_power = L_STEP + current_heater_power
@@ -281,26 +311,11 @@ def solar_heater():
         else:
             target_power = power + current_heater_power - L_TRH
             print(f"-> Leistungsregelung: um {power - L_TRH} W")
-        # ---------------------------------------------------------
-
-        # 2. Sicherheitscheck VOR der Leistungsanforderung
-        if (T_exc := check_max_t()):
-            print(f"### TEMP to high: T_exc: {T_exc} m°C")
-            print(f"LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
-            # Heizung bei T_MAX abschalten!
-            write_dac_reg(BUS, OFF_VAL)
-            current_heater_power = 0
-            time.sleep(10)
-            # vor nächster Schleife Temperaturen neu einlesen
-            for i in [0, 1, 2]:
-                TEMP[i] = check_level_temp(i)
-            continue
-            ww_load = calc_load()
 
         # Leistungsregelung für Heizpatrone basierend auf absolutem Überschuss
         if target_power >= L_TRH:
             print(power) #### DEBUG Info
-            print(target_power) #### DEBUG Info
+            #print(target_power) #### DEBUG Info
 
             # Berechne DAC Registerwert
             reg_val = get_dac_value(target_power)
