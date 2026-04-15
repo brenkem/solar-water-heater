@@ -313,14 +313,15 @@ def solar_heater():
         if power > L_STEP:
             # Fall A: Sonne kommt raus -> Langsam hochregeln
             target_power = L_STEP + current_heater_power
-            print(f"-> Rampe aktiv")
+            #print(f"-> Rampe aktiv") ### DEBUG info
         else:
+            # Fall B: Wolken ziehen vor die Sonne oder Eigenverbrauch steigt
             target_power = power + current_heater_power - L_TRH
-            print(f"-> Leistungsregelung: um {power - L_TRH} W")
+            #print(f"-> Leistungsregelung: um {power - L_TRH} W") ### DEBUG info
 
         # Leistungsregelung für Heizpatrone basierend auf absolutem Überschuss
         if target_power >= L_TRH:
-            print(power) #### DEBUG Info
+            #print(power) #### DEBUG Info
             #print(target_power) #### DEBUG Info
 
             # Berechne DAC Registerwert
