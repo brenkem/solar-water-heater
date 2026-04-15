@@ -6,7 +6,12 @@ import smbus2
 ################################## Definitionen ####################################
 # Pfad zur Leistungsdatei
 POWER_FILE = "/mnt/s0hm/power"
-LOAD_FILE = "/run/shm/ww_load"
+LOAD_FILE  = "/run/shm/ww_load"
+TEMP_FILES = [
+    "/run/shm/ww_temp_oben",
+    "/run/shm/ww_temp_mitte",
+    "/run/shm/ww_temp_unten"
+]
 
 ## Temperatur
 T_MAX = 80000  # 80 °C, Maximaltemperatur
@@ -19,9 +24,9 @@ L_STEP = 400   # 400 Watt Rampenschritte
 # Gewichtungsfaktoren nach Wassermenge (Summe = 10000)
 # 19,55% für oberen und unteren Warmwasserspeicherabschnitt; 60,9 % für Mittelteil
 W = [
-    1955,
-    6090,
-    1955
+    19.55,
+    60.90,
+    19.55
 ]
 
 # Paar 1: Oben [0], Paar 2: Mitte, Paar 3: Unten
@@ -143,23 +148,24 @@ def calc_load():
         T_avg = (TEMP[0] * W[0] + TEMP[1] * W[1] + TEMP[2] * W[2])
 
         # Berechnung der Ladung relativ zu T_MAX
-        # Formel: (T_avg / T_MAX) * 100
-        load = (T_avg / (T_MAX * 100))
+        load = (T_avg / T_MAX)
 
-        # Schreibe Speicherladung nach RAM
-
-        # Datei im Schreibmodus öffnen ('w')
+        # Schreiben der Speicherladung in RAM
         with open(LOAD_FILE, "w") as file:
             file.write(f"{load:.1f}")
+
+        # Schreiben der Temperaturverteilung in Temperaturdateifeld
+        for i in range(3):
+            with open(TEMP_FILES[i], "w") as file:
+                file.write(f"{TEMP[i]}")
 
         return load
 
     except PermissionError:
-        print("Fehler: Fehlende Berechtigungen zum Schreiben in diese Datei.")
+        print("Fehler: Fehlende Berechtigungen zum Schreiben in Datei.")
     except Exception as e:
         print(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
-
-    return load
+    return None
 
 
 def check_max_t():
