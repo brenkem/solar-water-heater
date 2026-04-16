@@ -85,7 +85,6 @@ def read_file(file):
     try:
         with open(file, 'r') as datei:
             inhalt = datei.read().strip()
-            datei.close()
             return int(inhalt)
 
     except FileNotFoundError:
@@ -243,6 +242,9 @@ def solar_heater():
     current_heater_power = 0
 
     # Initialisiere System
+
+    #### TODO: Initialisiere Tageszeit und Sonnenaufgang und Sonnenuntergang
+
     try:
         ## Initialisiere GPIO Pin
         GPIO_CHIP = lgpio.gpiochip_open(0)
@@ -280,10 +282,14 @@ def solar_heater():
 
     # Logikschleife
     while True:
-        # Lese Energiebezug
+        ## Lese Energiebezug
         try:
             power = read_file(POWER_FILE) # Energiefluss auslesen
-            power = (-power) # Vorzeichen drehen:: positiv: Netzeinspeisung
+            if power is None: # check data
+                print("WARNING: Energiebezug gescheitert. RETRY!")
+                time.sleep(1) # TODO  Kurze Pause vor dem Zweitversuch
+                power = read_file(POWER_FILE) # Zweitversuch
+            power = (-power) # Vorzeichen drehen => positiv: Netzeinspeisung
         except Exception:
             print("ERROR: Energiebezug ist ungültig.")
             # Heizung abschalten und kurz warten
@@ -292,10 +298,10 @@ def solar_heater():
             time.sleep(2)
             continue
 
-        # Berechne Speicherladung und im RAM ablegen
+        ## Berechne Speicherladung und im RAM ablegen
         ww_load = calc_load()
 
-        # Sicherheitscheck VOR der Leistungsanforderung
+        ## Sicherheitscheck vor Leistungsanforderung
         if (T_exc := check_max_t()):
             print(f"### TEMP to high: T_exc: {T_exc} m°C")
             print(f"LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
@@ -309,17 +315,16 @@ def solar_heater():
                 TEMP[i] = check_level_temp(i)
             continue
 
-        # Asymmetrische Leistungsanpassung mittels "Rampe"
+        ## Asymmetrische Leistungsanpassung mittels "Rampe"
         if power > L_STEP:
             # Fall A: Sonne kommt raus -> Langsam hochregeln
             target_power = L_STEP + current_heater_power
-            #print(f"-> Rampe aktiv") ### DEBUG info
         else:
             # Fall B: Wolken ziehen vor die Sonne oder Eigenverbrauch steigt
             target_power = power + current_heater_power - L_TRH
             #print(f"-> Leistungsregelung: um {power - L_TRH} W") ### DEBUG info
 
-        # Leistungsregelung für Heizpatrone basierend auf absolutem Überschuss
+        ## Leistungsregelung für Heizpatrone basierend auf absolutem Überschuss
         if target_power >= L_TRH:
             #print(power) #### DEBUG Info
             #print(target_power) #### DEBUG Info
@@ -331,8 +336,6 @@ def solar_heater():
                 write_dac_reg(BUS, reg_val)
 
             # Merke neu eingestellte Leistung für den nächsten Loop!
-            # TODO: Ideal wäre es, hier den realen Leistungswert aus der LUT
-            # zurückzulesen, aber target_power reicht als gute Näherung.
                 current_heater_power = target_power
                 print(f"DAC({target_power:>4} W) = 0x{hex(reg_val)}; LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
             except Exception:
@@ -341,7 +344,7 @@ def solar_heater():
         else:
             write_dac_reg(BUS, OFF_VAL)
             current_heater_power = 0
-            print(f"### No POWER: excess={target_power:>4} W; To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+            print(f"### No POWER: excess={target_power:>5} W; To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
 
         ####################### END WHILE ########################################
         # Wartezeit: etwa 3 Sekunden durch Auslesen von zwei Temperaturebenen zwecks Verzögerung Stromzähler
