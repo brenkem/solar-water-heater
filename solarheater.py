@@ -74,6 +74,11 @@ I2C_BUS_NUMBER = 1
 BUS = None
 OFF_VAL = 0x0000
 
+# DAC Parameter
+DEV_ADDR = 0x58
+REG_ADDR = 0x03
+
+
 # GPIO
 GPIO_CHIP = None
 REL_PIN = 18
@@ -87,14 +92,9 @@ def read_file(file):
             inhalt = datei.read().strip()
             return int(inhalt)
 
-    except FileNotFoundError:
-        print(f"Fehler: Die Datei unter '{file}' wurde nicht gefunden.")
-    except ValueError:
-        print(f"Fehler: Der Inhalt der Datei ist keine gültige Ganzzahl: {inhalt}")
-    except Exception as e:
-        print(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
-
-    return None
+    except (FileNotFoundError, ValueError, OSError) as e:
+        print(f"Fehler beim Lesen von {file}: {e}")
+        return None
 
 
 def check_level_temp(level):
@@ -115,7 +115,8 @@ def check_level_temp(level):
         return T_MAX
 
     # Bewerte Messergebnisse hinsichtlich erheblicher Temperaturdifferenz
-    if abs(T0 - T1) > T_DIFF:
+    diff = abs(T0 - T1)
+    if diff > T_DIFF:
         print(f"INFO: Differenz Ebene {level} zu hoch ({diff} m°C).")
 
         # Ebene erneut auslesen
@@ -131,7 +132,8 @@ def check_level_temp(level):
             print(f"WARNUNG: Temperatursensor auf Ebene {level} ausgefallen!")
             return T_MAX
 
-        if abs(T0 - T1) > T_DIFF:
+        diff = abs(T0 - T1)
+        if diff > T_DIFF:
             print(f"WARNUNG: Temp.differenz immer noch zu hoch ({diff} m°C)!")
 
     # Rückgabe des höheren Wertes
@@ -215,16 +217,12 @@ def write_dac_reg(i2c_bus, register_value):
     if i2c_bus is None:
         return
 
-    # DAC Parameter
-    device_address = 0x58
-    register_address = 0x03
-
     try:
         # Schreibe Highbyte in [1] und Lowbyte in [0]
         data = [(register_value & 0xFF), ((register_value >> 8) & 0xFF)]
 
         # Schreibe Datenfeld nach DAC
-        i2c_bus.write_i2c_block_data(device_address, register_address, data)
+        i2c_bus.write_i2c_block_data(DEV_ADDR, REG_ADDR, data)
     except Exception as e:
         print(f"I2C Schreibfehler: {e}")
         # Im Fehlerfall versuchen wir nicht weiter zu schreiben, um Bus-Hänger zu vermeiden
@@ -251,6 +249,8 @@ def solar_heater():
     global BUS
     global GPIO_CHIP
     current_heater_power = 0
+    ## Starte mit Ebene 0 ^= "oben"
+    ebene = 0
 
     # Initialisiere System
 
@@ -271,9 +271,6 @@ def solar_heater():
         if BUS:
             BUS.close()
         return
-
-    ## Starte mit Ebene 0 ^= "oben"
-    ebene = 0
 
     ## Initialisiere Temperaturfeld
     for i in [0, 1, 2]:
@@ -305,7 +302,7 @@ def solar_heater():
             # Heizung abschalten und kurz warten
             write_dac_reg(BUS, OFF_VAL)
             current_heater_power = 0
-            time.sleep(2)
+            time.sleep(1)
             continue
 
         ## Berechne Speicherladung und im RAM ablegen
@@ -313,8 +310,7 @@ def solar_heater():
 
         ## Sicherheitscheck vor Leistungsanforderung
         if (T_exc := check_max_t()):
-            print(f"### TEMP to high: T_exc: {T_exc} m°C")
-            print(f"LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+            print(f"### TEMP limit: T_exc: {T_exc} m°C, LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
             # Heizung bei T_MAX abschalten!
             write_dac_reg(BUS, OFF_VAL)
             current_heater_power = 0
