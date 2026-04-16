@@ -212,7 +212,6 @@ def write_dac_reg(i2c_bus, register_value):
     """
     Schreibt den übergebenen Registerwert in den DAC des übergebenen I2B Busses.
     """
-
     if i2c_bus is None:
         return
 
@@ -229,6 +228,18 @@ def write_dac_reg(i2c_bus, register_value):
     except Exception as e:
         print(f"I2C Schreibfehler: {e}")
         # Im Fehlerfall versuchen wir nicht weiter zu schreiben, um Bus-Hänger zu vermeiden
+
+def cleanup_files():
+    """
+    Löscht die erstellten Dateien im Filesystem.
+    """
+    files_to_remove = [LOAD_FILE] + TEMP_FILES
+    for f in files_to_remove:
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+        except Exception as e:
+            print(f"Fehler beim Löschen von {f}: {e}")
 
 
 def solar_heater():
@@ -287,7 +298,6 @@ def solar_heater():
             power = read_file(POWER_FILE) # Energiefluss auslesen
             if power is None: # check data
                 print("WARNING: Energiebezug gescheitert. RETRY!")
-                time.sleep(1) # TODO  Kurze Pause vor dem Zweitversuch
                 power = read_file(POWER_FILE) # Zweitversuch
             power = (-power) # Vorzeichen drehen => positiv: Netzeinspeisung
         except Exception:
@@ -327,7 +337,6 @@ def solar_heater():
         ## Leistungsregelung für Heizpatrone basierend auf absolutem Überschuss
         if target_power >= L_TRH:
             #print(power) #### DEBUG Info
-            #print(target_power) #### DEBUG Info
 
             # Berechne DAC Registerwert
             reg_val = get_dac_value(target_power)
@@ -352,7 +361,6 @@ def solar_heater():
             for i in range(2):
                 if ebene >= 2:
                     TEMP[ebene] = check_level_temp(ebene)
-                    #print(f"Lese Temp ebene {ebene}")
                     ebene = 0
                 else:
                    TEMP[ebene] = check_level_temp(ebene)
@@ -382,3 +390,4 @@ if __name__ == "__main__":
                 lgpio.gpiochip_close(GPIO_CHIP)
             except Exception:
                 pass
+        cleanup_files()
