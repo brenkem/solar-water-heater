@@ -1,7 +1,14 @@
+#!/usr/bin/env python
+
 import os
 import time
+import pytz
 import lgpio
 import smbus2
+from astral.sun import sun
+from astral import LocationInfo
+from datetime import datetime, timedelta
+
 
 ################################## Definitionen ####################################
 # Pfad zur Leistungsdatei
@@ -15,10 +22,10 @@ TEMP_FILES = [
 
 ## Temperatur
 T_MAX = 80000  # 80 °C, Maximaltemperatur
-T_DIFF = 2000  # 2 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
+T_DIFF = 4000  # 4 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
 
 # Leistung
-L_TRH = 200    # 300 Watt, Leistungsschwelle zum Heizen
+L_TRH  = 200    # 300 Watt, Leistungsschwelle zum Heizen
 L_STEP = 400   # 400 Watt Rampenschritte
 
 # Gewichtungsfaktoren nach Wassermenge (Summe = 10000)
@@ -78,10 +85,12 @@ OFF_VAL = 0x0000
 DEV_ADDR = 0x58
 REG_ADDR = 0x03
 
-
 # GPIO
 GPIO_CHIP = None
 REL_PIN = 18
+
+# Koordinaten (50°54'36.0"N 13°23'24.0"E)
+LAT, LON = 50.91, 13.39
 
 def read_file(file):
     """
@@ -240,11 +249,20 @@ def cleanup_files():
             print(f"Fehler beim Löschen von {f}: {e}")
 
 
-def solar_heater():
+def get_sun_data(lat, lon):
     """
-    Liest jede zyklisch den Energiebezug …
+    Berechne Sonnenereignisse für den aktuellen Tag.
     """
-    print(f"Starte Solarheater...")
+    city = LocationInfo("ANEWAND", "Germany", "UTC", lat, lon)
+    now = datetime.now(pytz.utc)
+    return sun(city.observer, date=now, tzinfo=pytz.utc)
+
+
+def solar_heater(sunset):
+    """
+    Liest zyklisch den Energiebezug und heizt Brauchwasser durch Energieüberschuss.
+    """
+    print(f"Starte Solarheater Routine...")
 
     global BUS
     global GPIO_CHIP
@@ -253,9 +271,7 @@ def solar_heater():
     ebene = 0
 
     # Initialisiere System
-
-    #### TODO: Initialisiere Tageszeit und Sonnenaufgang und Sonnenuntergang
-
+    now = datetime.now(pytz.utc)
     try:
         ## Initialisiere GPIO Pin
         GPIO_CHIP = lgpio.gpiochip_open(0)
@@ -289,7 +305,10 @@ def solar_heater():
 
 
     # Logikschleife
-    while True:
+    while now < sunset:
+        ## aktualisiere Tageszeit
+        now = datetime.now(pytz.utc)
+
         ## Lese Energiebezug
         try:
             power = read_file(POWER_FILE) # Energiefluss auslesen
@@ -365,9 +384,48 @@ def solar_heater():
             print(f"Fehler beim zyklischen Lesen der Ebene {ebene}")
 
 
+def main():
+    """
+    Kontrolliert Sonnenstand und wechselt zwischen Tag- und Nachtmodus.
+    """
+    print("Initialisiere Tagbewertungsroutine...")
+    current_sun = get_sun_data(LAT, LON)
+    last_update_day = datetime.now(pytz.utc).date()
+
+    while True:
+        now = datetime.now(pytz.utc)
+
+        # 1. Aktualisiere Sonnendaten bei Sonnenaufgang
+        print("Aktualisiere Sonnenstandsdaten.")
+        current_sun = get_sun_data(LAT, LON)
+        last_update_day = now.date()
+
+        # 2. Prüfen, ob Tag oder Nacht ist
+        is_daylight = current_sun["sunrise"] < now < current_sun["sunset"]
+
+        if is_daylight:
+            # --- AKTIVER MODUS (Tag) ---
+            print(f"[{now.strftime('%H:%M:%S')}] TAG-MODUS: Brauchwassererwärmung bis {current_sun["sunset"].strftime('%H:%M:%S')}")
+
+            # Energieüberschuss bewerten und verheizen
+            solar_heater(current_sun["sunset"])
+            write_dac_reg(BUS, OFF_VAL) # deaktiviere Leistungsteller
+            time.sleep(1)
+            lgpio.gpio_write(GPIO_CHIP, REL_PIN, 0) # trenne Schütz
+        else:
+            # --- STANDBY MODUS (Nacht) ---
+            print(f"[{now.strftime('%H:%M:%S')}] NACHT-MODUS: Auf Sonnenaufgang warten: {current_sun["sunrise"].strftime('%H:%M:%S')}")
+
+            while not is_daylight:
+                print(f"[{now.strftime('%H:%M:%S')}] sleep until {current_sun["sunrise"].strftime('%H:%M:%S')}")
+                # Warmwasserspeicherdaten alle 10 Minuten über Nacht aktualisieren
+                ww_load = calc_load()
+                time.sleep(600)
+
+
 if __name__ == "__main__":
     try:
-        solar_heater()
+        main()
     except KeyboardInterrupt:
         print("\n... Solarheater beendet.")
     except Exception as e:
