@@ -28,7 +28,7 @@ T_DIFF = 4000  # 4 °C, Toleranzschwelle zwischen Temperatursensoren der selben 
 L_TRH  = 200    # 300 Watt, Leistungsschwelle zum Heizen
 L_STEP = 400   # 400 Watt Rampenschritte
 
-# Gewichtungsfaktoren nach Wassermenge (Summe = 10000)
+# Gewichtungsfaktoren nach Wassermenge (Summe = 100)
 # 19,55% für oberen und unteren Warmwasserspeicherabschnitt; 60,9 % für Mittelteil
 W = [
     19.55,
@@ -315,13 +315,15 @@ def solar_heater(sunset):
             if power is None: # check data
                 print("WARNING: Energiebezug gescheitert. RETRY!")
                 power = read_file(POWER_FILE) # Zweitversuch
+                if power is None:
+                    raise ValueError("Energiebezug konnte nicht gelesen werden.")
             power = (-power) # Vorzeichen drehen => positiv: Netzeinspeisung
-        except Exception:
-            print("ERROR: Energiebezug ist ungültig.")
+        except Exception as e:
+            print("ERROR: Energiebezug ist ungültig ({e}).")
             # Heizung abschalten und kurz warten
             write_dac_reg(BUS, OFF_VAL)
             current_heater_power = 0
-            time.sleep(1)
+            time.sleep(2)
             continue
 
         ## Berechne Speicherladung und im RAM ablegen
@@ -382,6 +384,14 @@ def solar_heater(sunset):
                    ebene += 1
         except Exception:
             print(f"Fehler beim zyklischen Lesen der Ebene {ebene}")
+            time.sleep(3) # Wartezeit verhindert bei Sensorausfall dauerhaftes durchgehen der Regelschleife
+
+    # Verlasse Logikschleife
+    write_dac_reg(BUS, OFF_VAL) # deaktiviere Leistungsteller
+    BUS.close() # Schließe I2B Bus
+    time.sleep(1)
+    lgpio.gpio_write(GPIO_CHIP, REL_PIN, 0) # trenne Schütz
+    lgpio.gpiochip_close(GPIO_CHIP)
 
 
 def main():
@@ -395,30 +405,29 @@ def main():
     while True:
         now = datetime.now(pytz.utc)
 
-        # 1. Aktualisiere Sonnendaten bei Sonnenaufgang
-        print("Aktualisiere Sonnenstandsdaten.")
-        current_sun = get_sun_data(LAT, LON)
-        last_update_day = now.date()
-
-        # 2. Prüfen, ob Tag oder Nacht ist
-        is_daylight = current_sun["sunrise"] < now < current_sun["sunset"]
-
-        if is_daylight:
+        # Prüfen auf Tag oder Nacht
+        if current_sun["sunrise"] < now < current_sun["sunset"]:
             # --- AKTIVER MODUS (Tag) ---
-            print(f"[{now.strftime('%H:%M:%S')}] TAG-MODUS: Brauchwassererwärmung bis {current_sun["sunset"].strftime('%H:%M:%S')}")
+            print(f"[{now.strftime('%H:%M:%S')}] TAG-MODUS: Brauchwassererwärmung bis {current_sun['sunset'].strftime('%H:%M:%S')}")
 
             # Energieüberschuss bewerten und verheizen
             solar_heater(current_sun["sunset"])
-            write_dac_reg(BUS, OFF_VAL) # deaktiviere Leistungsteller
-            time.sleep(1)
-            lgpio.gpio_write(GPIO_CHIP, REL_PIN, 0) # trenne Schütz
         else:
             # --- STANDBY MODUS (Nacht) ---
-            print(f"[{now.strftime('%H:%M:%S')}] NACHT-MODUS: Auf Sonnenaufgang warten: {current_sun["sunrise"].strftime('%H:%M:%S')}")
+            print(f"[{now.strftime('%H:%M:%S')}] NACHT-MODUS: Auf Sonnenaufgang warten: {current_sun['sunrise'].strftime('%H:%M:%S')}")
 
-            while not is_daylight:
-                print(f"[{now.strftime('%H:%M:%S')}] sleep until {current_sun["sunrise"].strftime('%H:%M:%S')}")
-                # Warmwasserspeicherdaten alle 10 Minuten über Nacht aktualisieren
+            # Nächsten Sonnenaufgang bestimmen
+            if now >= current_sun["sunset"]:
+                # Es ist nach Sonnenuntergang -> Sonnenaufgang von morgen berechnen
+                tomorrow = now + timedelta(days=1)
+                city = LocationInfo("ANEWAND", "Germany", "UTC", LAT, LON)
+                next_sunrise = sun(city.observer, date=tomorrow, tzinfo=pytz.utc)["sunrise"]
+            else:
+                # Es ist noch vor Sonnenaufgang des aktuellen Tages
+                next_sunrise = current_sun["sunrise"]
+
+            # Warmwasserspeicherdaten alle 10 Minuten über Nacht aktualisieren
+            while datetime.now(pytz.utc) < next_sunrise:
                 ww_load = calc_load()
                 time.sleep(600)
 
