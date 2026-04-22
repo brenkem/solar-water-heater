@@ -7,10 +7,18 @@ import pytz
 import lgpio
 import smbus2
 import signal
+import logging
 from astral.sun import sun
 from astral import LocationInfo
 from datetime import datetime, timedelta
 
+# Grundkonfiguration des Loggings
+logging.basicConfig(
+#    level=logging.INFO,  # Ab welchem Detailgrad soll geloggt werden? (INFO, WARNING, ERROR, CRITICAL)
+    level=logging.DEBUG,  # Ab welchem Detailgrad soll geloggt werden? (INFO, WARNING, ERROR, CRITICAL)
+    format='%(asctime)s | %(levelname).4s | %(message)s',
+    datefmt='%d.%m. %H:%M:%S'
+)
 
 ################################## Definitionen ####################################
 # Pfad zur Leistungsdatei
@@ -24,7 +32,7 @@ TEMP_FILES = [
 
 ## Temperatur
 T_MAX = 80000  # 80 °C, Maximaltemperatur
-T_DIFF = 4000  # 4 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
+T_DIFF = 8000  # 8 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
 
 # Leistung
 L_TRH  = 200    # 300 Watt, Leistungsschwelle zum Heizen
@@ -104,7 +112,7 @@ def read_file(file):
             return int(inhalt)
 
     except (FileNotFoundError, ValueError, OSError) as e:
-        print(f"Fehler beim Lesen von {file}: {e}")
+        logging.error(f"Fehler beim Lesen von {file}: {e}")
         return None
 
 
@@ -121,14 +129,14 @@ def check_level_temp(level):
         # Falls ein Temperatursensor ausfällt, nimm den verbleibenden
         val = T0 if T0 is not None else T1
         if val is None:
-            print(f"KRITISCH: Ebene {level} komplett ausgefallen!")
-        print(f"WARNUNG: Temperatursensor auf Ebene {level} ausgefallen!")
+            logging.critical(f"Temp. Ebene {level} komplett ausgefallen!")
+        logging.warning(f"Temperatursensor auf Ebene {level} ausgefallen!")
         return T_MAX
 
     # Bewerte Messergebnisse hinsichtlich erheblicher Temperaturdifferenz
     diff = abs(T0 - T1)
     if diff > T_DIFF:
-        print(f"INFO: Differenz Ebene {level} zu hoch ({diff} m°C).")
+        logging.info(f"Differenz Ebene {level} zu hoch ({diff} m°C).")
 
         # Ebene erneut auslesen
         T0 = read_file(SENS_PAIRS[level][0])
@@ -139,13 +147,13 @@ def check_level_temp(level):
             # Falls ein Temperatursensor ausfällt, nimm den verbleibenden
             val = T0 if T0 is not None else T1
             if val is None:
-                print(f"KRITISCH: Ebene {level} komplett ausgefallen!")
-            print(f"WARNUNG: Temperatursensor auf Ebene {level} ausgefallen!")
+                logging.critical(f"Temp. Ebene {level} komplett ausgefallen!")
+            logging.warning(f"Temperatursensor auf Ebene {level} ausgefallen!")
             return T_MAX
 
         diff = abs(T0 - T1)
         if diff > T_DIFF:
-            print(f"WARNUNG: Temp.differenz immer noch zu hoch ({diff} m°C)!")
+            logging.warning(f"Temp.differenz immer noch zu hoch ({diff} m°C)!")
 
     # Rückgabe des höheren Wertes
     return max(T0, T1)
@@ -174,9 +182,9 @@ def calc_load():
         return load
 
     except PermissionError:
-        print("Fehler: Fehlende Berechtigungen zum Schreiben in Datei.")
+        logging.exception("Fehlende Berechtigungen zum Schreiben in Datei.")
     except Exception as e:
-        print(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
+        logging.exception(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
     return None
 
 
@@ -216,7 +224,7 @@ def get_dac_value(p_target):
                 r_target = r_low + (fraction * (r_high - r_low))
                 return int(round(r_target))
     except Exception as e:
-        print(f"Fehler bei DAC Interpolation: {e}")
+        logging.exception(f"Fehler bei DAC Interpolation: {e}")
 
     return 0
 
@@ -236,10 +244,10 @@ def write_dac_reg(i2c_bus, register_value):
         i2c_bus.write_i2c_block_data(DEV_ADDR, REG_ADDR, data)
 
     except Exception as e:
-        print(f"ERROR: I2C Schreibfehler: {e}")
+        logging.error(f"I2C Schreibfehler: {e}")
         # Im Fehlerfall versuchen wir nicht weiter zu schreiben, um Bus-Hänger zu vermeiden
         try:
-            print("INFO: Versuche Bus-Recovery.")
+            logging.info("Versuche Bus-Recovery.")
             # Bus komplett neu aufbauen
             try:
                 BUS.close()
@@ -252,10 +260,10 @@ def write_dac_reg(i2c_bus, register_value):
 
             # Nach Recovery zweiter Versuch
             BUS.write_i2c_block_data(DEV_ADDR, REG_ADDR, data)
-            print("INFO: I2C-Bus erfolgreich wiederhergestellt.")
+            logging.info("INFO: I2C-Bus erfolgreich wiederhergestellt.")
 
         except Exception as re_error:
-            print("FATAL: I2C-Bus Recoveryversuch gescheitert: {re_error}")
+            logging.critical("FATAL: I2C-Bus Recoveryversuch gescheitert: {re_error}")
 
             # Sicherheits-Stopp: Schütz sofort abfallen lassen, bevor raise
             if GPIO_CHIP:
@@ -274,7 +282,7 @@ def cleanup_files():
             if os.path.exists(f):
                 os.remove(f)
         except Exception as e:
-            print(f"Fehler beim Löschen von {f}: {e}")
+            logging.exception(f"Fehler beim Löschen von {f}: {e}")
 
 
 def get_sun_data(lat, lon):
@@ -290,7 +298,7 @@ def sigterm_handler(signum, frame):
     """
     Fängt das SIGTERM Signal von systemd ab und leitet einen sauberen Exit ein.
     """
-    print(f"[{datetime.now(pytz.utc).strftime('%H:%M:%S')}] SIGTERM: Leite Shutdown ein...", flush=True)
+    logging.info(f"[{datetime.now(pytz.utc).strftime('%H:%M:%S')}] SIGTERM: Leite Shutdown ein...")
     # sys.exit(0) löst die SystemExit Exception aus.
     sys.exit(0)
 
@@ -299,7 +307,7 @@ def solar_heater(sunset):
     """
     Liest zyklisch den Energiebezug und heizt Brauchwasser durch Energieüberschuss.
     """
-    print(f"Starte Solarheater Routine...")
+    logging.info(f"Starte Solarheater Routine...")
 
     global BUS
     global GPIO_CHIP
@@ -320,19 +328,19 @@ def solar_heater(sunset):
         BUS.timeout = 0.1 # Set a 100ms timeout
         write_dac_reg(BUS, OFF_VAL)
     except Exception as e:
-        print(f"Initialisierungsfehler: {e}")
+        logging.error(f"Initialisierungsfehler: {e}")
         if BUS:
             BUS.close()
         return
 
     ## Initialisiere Temperaturfeld
     for i in [0, 1, 2]:
-        print(f"INIT: Initiere Temperaturebene {i}.")
+        logging.info(f"Initiere Temperaturebene {i}.")
         TEMP[i] = check_level_temp(i)
 
     ## Test auf Temperaturüberschreitung
     while (T_exc := check_max_t()):
-        print(f"NOTE: Temperaturüberschreitung detektiert: {T_exc}!")
+        logging.warning(f"Temperaturüberschreitung detektiert: {T_exc}!")
         write_dac_reg(BUS, OFF_VAL)
         ww_load = calc_load()
         time.sleep(10)
@@ -350,13 +358,13 @@ def solar_heater(sunset):
         try:
             power = read_file(POWER_FILE) # Energiefluss auslesen
             if power is None: # check data
-                print("WARNING: Energiebezug gescheitert. RETRY!")
+                logging.warning("Energiebezug gescheitert. RETRY!")
                 power = read_file(POWER_FILE) # Zweitversuch
                 if power is None:
                     raise ValueError("Energiebezug konnte nicht gelesen werden.")
             power = (-power) # Vorzeichen drehen => positiv: Netzeinspeisung
         except Exception as e:
-            print("ERROR: Energiebezug ist ungültig ({e}).")
+            logging.exception("ERROR: Energiebezug ist ungültig ({e}).")
             # Heizung abschalten und kurz warten
             write_dac_reg(BUS, OFF_VAL)
             current_heater_power = 0
@@ -368,7 +376,7 @@ def solar_heater(sunset):
 
         ## Sicherheitscheck vor Leistungsanforderung
         if (T_exc := check_max_t()):
-            print(f"### TEMP limit: T_exc: {T_exc} m°C, LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+            logging.debug(f"### TEMP limit: T_exc: {T_exc} m°C, LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
             # Heizung bei T_MAX abschalten!
             write_dac_reg(BUS, OFF_VAL)
             current_heater_power = 0
@@ -386,11 +394,10 @@ def solar_heater(sunset):
         else:
             # Fall B: Wolken ziehen vor die Sonne oder Eigenverbrauch steigt
             target_power = power + current_heater_power - L_TRH
-            #print(f"-> Leistungsregelung: um {power - L_TRH} W") ### DEBUG info
 
         ## Leistungsregelung für Heizpatrone basierend auf absolutem Überschuss
         if target_power >= L_TRH:
-            #print(power) #### DEBUG Info
+            #logging.debug(power) #### DEBUG Info
 
             # Berechne DAC Registerwert
             reg_val = get_dac_value(target_power)
@@ -400,14 +407,14 @@ def solar_heater(sunset):
 
             # Merke neu eingestellte Leistung für den nächsten Loop!
                 current_heater_power = target_power
-                print(f"DAC({target_power:>4} W) = 0x{hex(reg_val)}; LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+                logging.debug(f"DAC({target_power:>4} W) = 0x{hex(reg_val)}; LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
             except Exception:
-                print("Kritischer Fehler beim Setzen der Leistung.")
+                logging.error("Kritischer Fehler beim Setzen der Leistung.")
                 current_heater_power = 0
         else:
             write_dac_reg(BUS, OFF_VAL)
             current_heater_power = 0
-            print(f"### No POWER: excess={target_power:>5} W; To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+            logging.debug(f"### No POWER: excess={target_power:>5} W; To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
 
         ####################### END WHILE ########################################
         # Wartezeit: etwa 3 Sekunden durch Auslesen von zwei Temperaturebenen zwecks Verzögerung Stromzähler
@@ -420,7 +427,7 @@ def solar_heater(sunset):
                    TEMP[ebene] = check_level_temp(ebene)
                    ebene += 1
         except Exception:
-            print(f"Fehler beim zyklischen Lesen der Ebene {ebene}")
+            logging.error(f"Fehler beim zyklischen Lesen der Temperaturebene {ebene}")
             time.sleep(3) # Wartezeit verhindert bei Sensorausfall dauerhaftes durchgehen der Regelschleife
 
     # Verlasse Logikschleife
@@ -438,7 +445,7 @@ def main():
     # Registrierung Signal-Handler.
     signal.signal(signal.SIGTERM, sigterm_handler)
 
-    print("Initialisiere Tagbewertungsroutine...")
+    logging.info("Initialisiere Tagbewertungsroutine...")
     current_sun = get_sun_data(LAT, LON)
     last_update_day = datetime.now(pytz.utc).date()
 
@@ -448,13 +455,13 @@ def main():
         # Prüfen auf Tag oder Nacht
         if current_sun["sunrise"] < now < current_sun["sunset"]:
             # --- AKTIVER MODUS (Tag) ---
-            print(f"[{now.strftime('%H:%M:%S')}] TAG-MODUS: Brauchwassererwärmung bis {current_sun['sunset'].strftime('%H:%M:%S')}")
+            logging.info(f"[{now.strftime('%H:%M:%S')}] TAG-MODUS: Brauchwassererwärmung bis {current_sun['sunset'].strftime('%H:%M:%S')}")
 
             # Energieüberschuss bewerten und verheizen
             solar_heater(current_sun["sunset"])
         else:
             # --- STANDBY MODUS (Nacht) ---
-            print(f"[{now.strftime('%H:%M:%S')}] NACHT-MODUS: Auf Sonnenaufgang warten: {current_sun['sunrise'].strftime('%H:%M:%S')}")
+            logging.info(f"[{now.strftime('%H:%M:%S')}] NACHT-MODUS: Auf Sonnenaufgang warten: {current_sun['sunrise'].strftime('%H:%M:%S')}")
 
             # Nächsten Sonnenaufgang bestimmen
             if now >= current_sun["sunset"]:
@@ -476,11 +483,11 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n... Solarheater beendet.")
+        logging.info("\n... Solarheater beendet.")
     except SystemExit:
-        print("\n... Solarheater wird vom System beendet (SIGTERM).")
+        logging.info("\n... Solarheater wird vom System beendet (SIGTERM).")
     except Exception as e:
-        print(f"\n... Solarheater durch Fehler beendet: {e}")
+        logging.exception(f"\n... Solarheater durch Fehler beendet: {e}")
     finally:
         if BUS:
             try:
