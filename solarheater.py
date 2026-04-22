@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 
 import os
+import sys
 import time
 import pytz
 import lgpio
 import smbus2
+import signal
 from astral.sun import sun
 from astral import LocationInfo
 from datetime import datetime, timedelta
@@ -284,6 +286,15 @@ def get_sun_data(lat, lon):
     return sun(city.observer, date=now, tzinfo=pytz.utc)
 
 
+def sigterm_handler(signum, frame):
+    """
+    Fängt das SIGTERM Signal von systemd ab und leitet einen sauberen Exit ein.
+    """
+    print(f"[{datetime.now(pytz.utc).strftime('%H:%M:%S')}] SIGTERM: Leite Shutdown ein...", flush=True)
+    # sys.exit(0) löst die SystemExit Exception aus.
+    sys.exit(0)
+
+
 def solar_heater(sunset):
     """
     Liest zyklisch den Energiebezug und heizt Brauchwasser durch Energieüberschuss.
@@ -424,6 +435,9 @@ def main():
     """
     Kontrolliert Sonnenstand und wechselt zwischen Tag- und Nachtmodus.
     """
+    # Registrierung Signal-Handler.
+    signal.signal(signal.SIGTERM, sigterm_handler)
+
     print("Initialisiere Tagbewertungsroutine...")
     current_sun = get_sun_data(LAT, LON)
     last_update_day = datetime.now(pytz.utc).date()
@@ -463,6 +477,8 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\n... Solarheater beendet.")
+    except SystemExit:
+        print("\n... Solarheater wird vom System beendet (SIGTERM).")
     except Exception as e:
         print(f"\n... Solarheater durch Fehler beendet: {e}")
     finally:
