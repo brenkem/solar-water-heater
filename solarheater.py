@@ -224,7 +224,7 @@ def write_dac_reg(i2c_bus, register_value):
     Schreibt den übergebenen Registerwert in den DAC des übergebenen I2B Busses.
     """
     if i2c_bus is None:
-        return
+        return None
 
     try:
         # Schreibe Highbyte in [1] und Lowbyte in [0]
@@ -232,9 +232,35 @@ def write_dac_reg(i2c_bus, register_value):
 
         # Schreibe Datenfeld nach DAC
         i2c_bus.write_i2c_block_data(DEV_ADDR, REG_ADDR, data)
+
     except Exception as e:
-        print(f"I2C Schreibfehler: {e}")
+        print(f"ERROR: I2C Schreibfehler: {e}")
         # Im Fehlerfall versuchen wir nicht weiter zu schreiben, um Bus-Hänger zu vermeiden
+        try:
+            print("INFO: Versuche Bus-Recovery.")
+            # Bus komplett neu aufbauen
+            try:
+                BUS.close()
+            except:
+                pass # Ignorieren, falls schon tot
+
+            time.sleep(0.5)
+            BUS = smbus2.SMBus(I2C_BUS_NUMBER)
+            BUS.timeout = 0.1
+
+            # Nach Recovery zweiter Versuch
+            BUS.write_i2c_block_data(DEV_ADDR, REG_ADDR, data)
+            print("INFO: I2C-Bus erfolgreich wiederhergestellt.")
+
+        except Exception as re_error:
+            print("FATAL: I2C-Bus Recoveryversuch gescheitert: {re_error}")
+
+            # Sicherheits-Stopp: Schütz sofort abfallen lassen, bevor raise
+            if GPIO_CHIP:
+                lgpio.gpio_write(GPIO_CHIP, REL_PIN, 0)
+
+            raise re_error # Reicht den Fehler an die Hauptschleife weiter
+
 
 def cleanup_files():
     """
