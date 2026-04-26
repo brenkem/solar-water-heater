@@ -16,8 +16,7 @@ from datetime import datetime, timedelta
 logging.basicConfig(
 #    level=logging.INFO,  # Ab welchem Detailgrad soll geloggt werden? (INFO, WARNING, ERROR, CRITICAL)
     level=logging.DEBUG,  # Ab welchem Detailgrad soll geloggt werden? (INFO, WARNING, ERROR, CRITICAL)
-    format='%(asctime)s | %(levelname).4s | %(message)s',
-    datefmt='%d.%m. %H:%M:%S'
+    format='%(levelname).4s | %(message)s',
 )
 
 ################################## Definitionen ####################################
@@ -195,6 +194,8 @@ def check_max_t():
     for i in [0, 1, 2]:
         if TEMP[i] >= T_MAX:
             return TEMP[i]
+
+    ### TODO: heat again if oben>=80°C und unten < 60 °C (3/4 %)
     return 0
 
 
@@ -340,7 +341,7 @@ def solar_heater(sunset):
 
     ## Test auf Temperaturüberschreitung
     while (T_exc := check_max_t()):
-        logging.warning(f"Temperaturüberschreitung detektiert: {T_exc}!")
+        logging.warning(f"Temperaturüberschreitung detektiert: {T_exc} °C")
         write_dac_reg(BUS, OFF_VAL)
         ww_load = calc_load()
         time.sleep(10)
@@ -376,7 +377,7 @@ def solar_heater(sunset):
 
         ## Sicherheitscheck vor Leistungsanforderung
         if (T_exc := check_max_t()):
-            logging.debug(f"### TEMP limit: T_exc: {T_exc} m°C, LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+            logging.debug(f"## TEMP limit reached: LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
             # Heizung bei T_MAX abschalten!
             write_dac_reg(BUS, OFF_VAL)
             current_heater_power = 0
@@ -403,9 +404,10 @@ def solar_heater(sunset):
             reg_val = get_dac_value(target_power)
 
             try:
+                # aktiviere Leistungssteller zur Ansteuerung der Heizpatrone
                 write_dac_reg(BUS, reg_val)
 
-            # Merke neu eingestellte Leistung für den nächsten Loop!
+                # Merke neu eingestellte Leistung für den nächsten Loop!
                 current_heater_power = target_power
                 logging.debug(f"DAC({target_power:>4} W) = 0x{hex(reg_val)}; LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
             except Exception:
@@ -447,7 +449,6 @@ def main():
 
     logging.info("Initialisiere Tagbewertungsroutine...")
     current_sun = get_sun_data(LAT, LON)
-    last_update_day = datetime.now(pytz.utc).date()
 
     while True:
         now = datetime.now(pytz.utc)
@@ -455,26 +456,26 @@ def main():
         # Prüfen auf Tag oder Nacht
         if current_sun["sunrise"] < now < current_sun["sunset"]:
             # --- AKTIVER MODUS (Tag) ---
-            logging.info(f"[{now.strftime('%H:%M:%S')}] TAG-MODUS: Brauchwassererwärmung bis {current_sun['sunset'].strftime('%H:%M:%S')}")
+            logging.info(f"TAG-MODUS: Brauchwassererwärmung bis {current_sun['sunset'].strftime('%H:%M:%S')} (UTC)")
 
             # Energieüberschuss bewerten und verheizen
             solar_heater(current_sun["sunset"])
+
         else:
             # --- STANDBY MODUS (Nacht) ---
-            logging.info(f"[{now.strftime('%H:%M:%S')}] NACHT-MODUS: Auf Sonnenaufgang warten: {current_sun['sunrise'].strftime('%H:%M:%S')}")
+            logging.info(f"NACHT-MODUS: Auf Sonnenaufgang warten: {current_sun['sunrise'].strftime('%H:%M:%S')} (UTC)")
 
             # Nächsten Sonnenaufgang bestimmen
             if now >= current_sun["sunset"]:
-                # Es ist nach Sonnenuntergang -> Sonnenaufgang von morgen berechnen
+                # Vortag nach Sonnenuntergang -> Sonnenaufgang von morgen berechnen
                 tomorrow = now + timedelta(days=1)
                 city = LocationInfo("ANEWAND", "Germany", "UTC", LAT, LON)
-                next_sunrise = sun(city.observer, date=tomorrow, tzinfo=pytz.utc)["sunrise"]
-            else:
-                # Es ist noch vor Sonnenaufgang des aktuellen Tages
-                next_sunrise = current_sun["sunrise"]
+                current_sun = sun(city.observer, date=tomorrow, tzinfo=pytz.utc)
+                logging.info(f"---[{now.strftime('%H:%M:%S')}] Sonnenaufgang für morgen neu berechnet: {current_sun['sunrise'].strftime('%H:%M:%S')}")
+            # else: # es ist bereits der Tag des Sonnenaufgangs
 
             # Warmwasserspeicherdaten alle 10 Minuten über Nacht aktualisieren
-            while datetime.now(pytz.utc) < next_sunrise:
+            while datetime.now(pytz.utc) < current_sun["sunrise"]:
                 ww_load = calc_load()
                 time.sleep(600)
 
