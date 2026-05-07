@@ -30,12 +30,14 @@ TEMP_FILES = [
 ]
 
 ## Temperatur
-T_MAX = 80000  # 80 °C, Maximaltemperatur
+T_MAX = 82000  # 81 °C, Maximaltemperatur
+T_LIMIT = (T_MAX - 2000)  # 2 °C Puffer um mit verringerter Heizleistung die Speicherladung zu maximieren
 T_DIFF = 8000  # 8 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
 
 # Leistung
-L_TRH  = 200    # 300 Watt, Leistungsschwelle zum Heizen
-L_STEP = 400   # 400 Watt Rampenschritte
+L_SOAK = 500    # 400 Watt zur durchwärmung des Speichers kurz vor T_MAX
+L_TRH  = 100    # 100 Watt, Leistungsschwelle zum Heizen
+L_STEP = 400    # 400 Watt Rampenschritte
 
 # Gewichtungsfaktoren nach Wassermenge (Summe = 100)
 # 19,55% für oberen und unteren Warmwasserspeicherabschnitt; 60,9 % für Mittelteil
@@ -187,12 +189,12 @@ def calc_load():
     return None
 
 
-def check_max_t():
+def check_t(TEMPERATUR):
     """
     Kontrolliert ob in einer Temperaturebene die Maximaltemperatur überschritten wurde.
     """
     for i in [0, 1, 2]:
-        if TEMP[i] >= T_MAX:
+        if TEMP[i] >= TEMPERATUR:
             return TEMP[i]
 
     ### TODO: heat again if oben>=80°C und unten < 60 °C (3/4 %)
@@ -340,7 +342,7 @@ def solar_heater(sunset):
         TEMP[i] = check_level_temp(i)
 
     ## Test auf Temperaturüberschreitung
-    while (T_exc := check_max_t()):
+    while (T_exc := check_t(T_MAX)):
         logging.warning(f"Temperaturüberschreitung detektiert: {T_exc} °C")
         write_dac_reg(BUS, OFF_VAL)
         ww_load = calc_load()
@@ -360,6 +362,7 @@ def solar_heater(sunset):
             power = read_file(POWER_FILE) # Energiefluss auslesen
             if power is None: # check data
                 logging.warning("Energiebezug gescheitert. RETRY!")
+                time.sleep(0.1)
                 power = read_file(POWER_FILE) # Zweitversuch
                 if power is None:
                     raise ValueError("Energiebezug konnte nicht gelesen werden.")
@@ -375,18 +378,6 @@ def solar_heater(sunset):
         ## Berechne Speicherladung und im RAM ablegen
         ww_load = calc_load()
 
-        ## Sicherheitscheck vor Leistungsanforderung
-        if (T_exc := check_max_t()):
-            logging.debug(f"## TEMP limit reached: LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
-            # Heizung bei T_MAX abschalten!
-            write_dac_reg(BUS, OFF_VAL)
-            current_heater_power = 0
-            ww_load = calc_load()
-            time.sleep(10)
-            # vor nächster Schleife Temperaturen neu einlesen
-            for i in [0, 1, 2]:
-                TEMP[i] = check_level_temp(i)
-            continue
 
         ## Asymmetrische Leistungsanpassung mittels "Rampe"
         if power > L_STEP:
@@ -396,7 +387,27 @@ def solar_heater(sunset):
             # Fall B: Wolken ziehen vor die Sonne oder Eigenverbrauch steigt
             target_power = power + current_heater_power - L_TRH
 
-        ## Leistungsregelung für Heizpatrone basierend auf absolutem Überschuss
+
+        ## Sicherheitscheck vor Leistungsanforderung
+        if (T_exc := check_t(T_LIMIT)):
+            if (T_exc := check_t(T_MAX)):
+                logging.debug(f"## TEMP  MAX  reached: LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+                # Heizung bei T_MAX abschalten!
+                write_dac_reg(BUS, OFF_VAL)
+                current_heater_power = 0
+                ww_load = calc_load()
+                time.sleep(10)
+                # vor nächster Schleife Temperaturen neu einlesen
+                for i in [0, 1, 2]:
+                    TEMP[i] = check_level_temp(i)
+                continue
+            else:
+                # ggf. Leistungsminderung, falls Temperatur zwischen T_LIMIT und T_MAX
+                if target_power > L_SOAK:
+                    target_power = L_SOAK
+
+
+        ## Leistungsregelung für Heizpatrone entsprechend auf Leistungsanforderung
         if target_power >= L_TRH:
             #logging.debug(power) #### DEBUG Info
 
