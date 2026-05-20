@@ -22,11 +22,12 @@ logging.basicConfig(
 ################################## Definitionen ####################################
 # Pfad zur Leistungsdatei
 POWER_FILE = "/mnt/s0hm/power"
-LOAD_FILE  = "/run/shm/ww_load"
+LOAD_FILE  = "/dev/shm/ww_load"
 TEMP_FILES = [
-    "/run/shm/ww_temp_oben",
-    "/run/shm/ww_temp_mitte",
-    "/run/shm/ww_temp_unten"
+    "/dev/shm/ww_temp_oben",
+    "/dev/shm/ww_temp_mitte",
+    "/dev/shm/ww_temp_unten",
+    "/dev/shm/ww_temp_max"
 ]
 
 ## Temperatur
@@ -35,9 +36,10 @@ T_LIMIT = (T_MAX - 2000)  # 2 °C Puffer um mit verringerter Heizleistung die Sp
 T_DIFF = 8000  # 8 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
 
 # Leistung
-L_SOAK = 500    # 400 Watt zur durchwärmung des Speichers kurz vor T_MAX
-L_TRH  = 100    # 100 Watt, Leistungsschwelle zum Heizen
+L_MAX  = 9000   # 9 kW, Maximalleistung des verbauten Heizstabs
+L_SOAK = 500    # 500 Watt zur Durchwärmung des Speichers kurz vor T_MAX
 L_STEP = 400    # 400 Watt Rampenschritte
+L_TRH  = 100    # 100 Watt, Leistungsschwelle zum Heizen
 
 # Gewichtungsfaktoren nach Wassermenge (Summe = 100)
 # 19,55% für oberen und unteren Warmwasserspeicherabschnitt; 60,9 % für Mittelteil
@@ -337,9 +339,19 @@ def solar_heater(sunset):
         return
 
     ## Initialisiere Temperaturfeld
+    ### schreibe Temperaturen
     for i in [0, 1, 2]:
         logging.info(f"Initiere Temperaturebene {i}.")
         TEMP[i] = check_level_temp(i)
+
+    ### legt maximaltemperatur fest
+    try:
+        with open(TEMP_FILES[3], "w") as file:
+            file.write(f"{T_MAX}")
+    except (FileNotFoundError, ValueError, OSError) as e:
+        logging.error(f"Fehler beim Schreiben von {file}: {e}")
+        return None
+
 
     ## Test auf Temperaturüberschreitung
     while (T_exc := check_t(T_MAX)):
@@ -420,7 +432,7 @@ def solar_heater(sunset):
 
                 # Merke neu eingestellte Leistung für den nächsten Loop!
                 current_heater_power = target_power
-                logging.debug(f"DAC({target_power:>4} W) = 0x{hex(reg_val)}; LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
+                logging.debug(f"DAC({target_power:>4} W) = {hex(reg_val)}; LOAD: {ww_load:.1f} %, To: {TEMP[0]} m°C, Tm: {TEMP[1]} m°C,Tu: {TEMP[2]} m°C")
             except Exception:
                 logging.error("Kritischer Fehler beim Setzen der Leistung.")
                 current_heater_power = 0
