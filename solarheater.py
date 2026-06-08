@@ -31,13 +31,13 @@ TEMP_FILES = [
 ]
 
 ## Temperatur
-T_MAX = 82000  # 81 °C, Maximaltemperatur
-T_LIMIT = (T_MAX - 2000)  # 2 °C Puffer um mit verringerter Heizleistung die Speicherladung zu maximieren
+T_MAX = 85000  # 85 °C, Maximaltemperatur
+T_LIMIT = (T_MAX - 1000)  # 1 °C Puffer um mit verringerter Heizleistung die Speicherladung zu maximieren
 T_DIFF = 8000  # 8 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
 
 # Leistung
 L_MAX  = 9000   # 9 kW, Maximalleistung des verbauten Heizstabs
-L_SOAK = 500    # 500 Watt zur Durchwärmung des Speichers kurz vor T_MAX
+L_SOAK = 300    # 300 Watt zur Durchwärmung des Speichers kurz vor T_MAX
 L_STEP = 400    # 400 Watt Rampenschritte
 L_TRH  = 100    # 100 Watt, Leistungsschwelle zum Heizen
 
@@ -199,7 +199,6 @@ def check_t(TEMPERATUR):
         if TEMP[i] >= TEMPERATUR:
             return TEMP[i]
 
-    ### TODO: heat again if oben>=80°C und unten < 60 °C (3/4 %)
     return 0
 
 
@@ -418,11 +417,13 @@ def solar_heater(sunset):
                 if target_power > L_SOAK:
                     target_power = L_SOAK
 
+        ## Kontrolliere auf Fehlerhafte Leistungsabgabe
+        if target_power > L_MAX:
+            logging.error("Kritischer Fehler: Regelgrenze überschritten. Tatsächliche Leistungsabgabe weicht von internen Berechnungen ab.")
+            target_power = L_MAX
 
         ## Leistungsregelung für Heizpatrone entsprechend auf Leistungsanforderung
         if target_power >= L_TRH:
-            #logging.debug(power) #### DEBUG Info
-
             # Berechne DAC Registerwert
             reg_val = get_dac_value(target_power)
 
@@ -515,6 +516,7 @@ if __name__ == "__main__":
     finally:
         if BUS:
             try:
+                ## TODO: Alle 4 Kanäle abschalten!!! Auch bei Fail Safe
                 write_dac_reg(BUS, OFF_VAL) # setze Leistungsteller auf 0V
                 BUS.close() # Schließe I2B Bus
             except Exception:
