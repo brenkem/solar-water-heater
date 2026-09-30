@@ -14,8 +14,8 @@ from datetime import datetime, timedelta
 
 # Grundkonfiguration des Loggings
 logging.basicConfig(
-#    level=logging.INFO,  # Ab welchem Detailgrad soll geloggt werden? (INFO, WARNING, ERROR, CRITICAL)
-    level=logging.DEBUG,  # Ab welchem Detailgrad soll geloggt werden? (INFO, WARNING, ERROR, CRITICAL)
+    level=logging.INFO,  # Ab welchem Detailgrad soll geloggt werden? (INFO, WARNING, ERROR, CRITICAL)
+#    level=logging.DEBUG,  # Ab welchem Detailgrad soll geloggt werden? (INFO, WARNING, ERROR, CRITICAL)
     format='%(levelname).4s | %(message)s',
 )
 
@@ -31,13 +31,13 @@ TEMP_FILES = [
 ]
 
 ## Temperatur
-T_MAX = 85000  # 85 °C, Maximaltemperatur
-T_LIMIT = (T_MAX - 1000)  # 1 °C Puffer um mit verringerter Heizleistung die Speicherladung zu maximieren
+T_MAX = 87000  # 87 °C, Maximaltemperatur
+T_LIMIT = (T_MAX - 3000)  # 3 °C Puffer um mit verringerter Heizleistung die Speicherladung zu maximieren
 T_DIFF = 8000  # 8 °C, Toleranzschwelle zwischen Temperatursensoren der selben Ebene
 
 # Leistung
 L_MAX  = 9000   # 9 kW, Maximalleistung des verbauten Heizstabs
-L_SOAK = 300    # 300 Watt zur Durchwärmung des Speichers kurz vor T_MAX
+L_SOAK = 500    # 500 Watt zur Durchwärmung des Speichers kurz vor T_MAX
 L_STEP = 400    # 400 Watt Rampenschritte
 L_TRH  = 100    # 100 Watt, Leistungsschwelle zum Heizen
 
@@ -343,14 +343,6 @@ def solar_heater(sunset):
         logging.info(f"Initiere Temperaturebene {i}.")
         TEMP[i] = check_level_temp(i)
 
-    ### legt maximaltemperatur fest
-    try:
-        with open(TEMP_FILES[3], "w") as file:
-            file.write(f"{T_MAX}")
-    except (FileNotFoundError, ValueError, OSError) as e:
-        logging.error(f"Fehler beim Schreiben von {file}: {e}")
-        return None
-
 
     ## Test auf Temperaturüberschreitung
     while (T_exc := check_t(T_MAX)):
@@ -471,6 +463,15 @@ def main():
     # Registrierung Signal-Handler.
     signal.signal(signal.SIGTERM, sigterm_handler)
 
+    # Maximaltemperatur ablegen
+    try:
+        with open(TEMP_FILES[3], "w") as file:
+            file.write(f"{T_MAX}")
+    except (FileNotFoundError, ValueError, OSError) as e:
+        logging.error(f"Fehler beim Schreiben von {file}: {e}")
+        return None
+
+    # Sonnenstand berechnen
     logging.info("Initialisiere Tagbewertungsroutine...")
     current_sun = get_sun_data(LAT, LON)
 
@@ -497,6 +498,10 @@ def main():
                 current_sun = sun(city.observer, date=tomorrow, tzinfo=pytz.utc)
                 logging.info(f"---[{now.strftime('%H:%M:%S')}] Sonnenaufgang für morgen neu berechnet: {current_sun['sunrise'].strftime('%H:%M:%S')}")
             # else: # es ist bereits der Tag des Sonnenaufgangs
+
+            # aktualisiere Temperaturfeld
+            for i in [0, 1, 2]:
+              TEMP[i] = check_level_temp(i)
 
             # Warmwasserspeicherdaten alle 10 Minuten über Nacht aktualisieren
             while datetime.now(pytz.utc) < current_sun["sunrise"]:
